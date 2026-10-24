@@ -21,9 +21,9 @@ app = FastAPI(
     title=settings.APP_NAME,
     description="AI-Powered WhatsApp Chatbot using RAG — FastAPI Backend",
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 # ─── CORS ────────────────────────────────────────────────────
@@ -32,8 +32,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:3000",
-        settings.BACKEND_URL,
-        # Add your Vercel frontend URL here
+        "https://whatsapp-rag-chatbot-backend.onrender.com",
+        "https://whatsapp-rag-chatbot.vercel.app",
+        # Wildcard for all Vercel preview deployments
+        "https://*.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
