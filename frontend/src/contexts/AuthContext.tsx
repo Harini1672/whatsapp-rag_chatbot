@@ -22,7 +22,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   const fetchProfile = useCallback(async (userId: string) => {
-    const { data: member } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: member } = await (supabase as any)
       .from('organization_members')
       .select('role, organizations(id, name)')
       .eq('user_id', userId)
@@ -74,7 +75,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!data.user) throw new Error('Sign up failed — no user returned')
 
     // Create organization
-    const { data: org, error: orgError } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: org, error: orgError } = await (supabase as any)
       .from('organizations')
       .insert({ name: orgName, owner_id: data.user.id })
       .select()
@@ -82,7 +84,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (orgError) throw new Error(orgError.message)
 
     // Create membership
-    const { error: memberError } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: memberError } = await (supabase as any)
       .from('organization_members')
       .insert({ org_id: org.id, user_id: data.user.id, role: 'admin' })
     if (memberError) throw new Error(memberError.message)
