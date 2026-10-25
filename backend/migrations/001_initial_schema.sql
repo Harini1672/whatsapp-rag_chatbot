@@ -1,6 +1,6 @@
 -- ============================================================
 -- RAG ChatBot — Supabase Database Schema
--- Run this in the Supabase SQL Editor
+-- Safe to re-run — uses IF NOT EXISTS and DROP POLICY IF EXISTS
 -- ============================================================
 
 -- Enable UUID extension
@@ -95,8 +95,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_conversations_org_id ON conversations(org_id);
-CREATE INDEX IF NOT EXISTS idx_conversations_user_phone ON conversations(user_phone);
+CREATE INDEX IF NOT EXISTS idx_conversations_org_id       ON conversations(org_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_user_phone   ON conversations(user_phone);
 CREATE INDEX IF NOT EXISTS idx_conversations_last_message ON conversations(last_message_at DESC);
 
 -- ─── Messages ────────────────────────────────────────────────
@@ -115,8 +115,8 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_messages_org_id ON messages(org_id);
-CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_org_id          ON messages(org_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at      ON messages(created_at DESC);
 
 -- ─── Support Requests ────────────────────────────────────────
 
@@ -155,8 +155,8 @@ CREATE TABLE IF NOT EXISTS analytics_events (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_analytics_events_org ON analytics_events(org_id);
-CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_org     ON analytics_events(org_id);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_type    ON analytics_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_created ON analytics_events(created_at DESC);
 
 -- ─── Row Level Security ──────────────────────────────────────
@@ -172,7 +172,8 @@ ALTER TABLE support_requests       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feedback               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analytics_events       ENABLE ROW LEVEL SECURITY;
 
--- Helper function to get org_id for current user
+-- ─── Helper Function ─────────────────────────────────────────
+
 CREATE OR REPLACE FUNCTION get_my_org_id()
 RETURNS UUID AS $$
   SELECT org_id FROM organization_members
@@ -180,7 +181,23 @@ RETURNS UUID AS $$
   LIMIT 1;
 $$ LANGUAGE SQL SECURITY DEFINER STABLE;
 
--- RLS Policies — users can only access their own org's data
+-- ─── Drop existing policies (safe re-run) ────────────────────
+
+DROP POLICY IF EXISTS "org_members_own"                ON organization_members;
+DROP POLICY IF EXISTS "org_own"                        ON organizations;
+DROP POLICY IF EXISTS "chatbots_own_org"               ON chatbots;
+DROP POLICY IF EXISTS "whatsapp_connections_own_org"   ON whatsapp_connections;
+DROP POLICY IF EXISTS "documents_own_org"              ON documents;
+DROP POLICY IF EXISTS "conversations_own_org"          ON conversations;
+DROP POLICY IF EXISTS "messages_own_org"               ON messages;
+DROP POLICY IF EXISTS "support_requests_own_org"       ON support_requests;
+DROP POLICY IF EXISTS "feedback_own_org"               ON feedback;
+DROP POLICY IF EXISTS "analytics_events_own_org"       ON analytics_events;
+DROP POLICY IF EXISTS "documents_upload_own_org"       ON storage.objects;
+DROP POLICY IF EXISTS "documents_read_own_org"         ON storage.objects;
+DROP POLICY IF EXISTS "audio_public_read"              ON storage.objects;
+
+-- ─── RLS Policies ────────────────────────────────────────────
 
 CREATE POLICY "org_members_own" ON organization_members
     USING (user_id = auth.uid());
@@ -212,26 +229,29 @@ CREATE POLICY "feedback_own_org" ON feedback
 CREATE POLICY "analytics_events_own_org" ON analytics_events
     USING (org_id = get_my_org_id());
 
--- Service role bypasses RLS (used by backend)
--- No policy needed — service role always bypasses RLS
-
--- ─── Supabase Storage Buckets ────────────────────────────────
--- Run these manually in Supabase Storage dashboard or via this SQL:
+-- ─── Storage Buckets ─────────────────────────────────────────
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit)
 VALUES
-    ('documents', 'documents', false, 10485760),    -- 10MB, private
-    ('audio-responses', 'audio-responses', true, 5242880)  -- 5MB, public
+    ('documents',       'documents',       false, 10485760),
+    ('audio-responses', 'audio-responses', true,  5242880)
 ON CONFLICT (id) DO NOTHING;
 
--- Storage RLS
+-- ─── Storage RLS Policies ────────────────────────────────────
+
 CREATE POLICY "documents_upload_own_org" ON storage.objects
     FOR INSERT TO authenticated
-    WITH CHECK (bucket_id = 'documents' AND (storage.foldername(name))[1] = get_my_org_id()::text);
+    WITH CHECK (
+        bucket_id = 'documents'
+        AND (storage.foldername(name))[1] = get_my_org_id()::text
+    );
 
 CREATE POLICY "documents_read_own_org" ON storage.objects
     FOR SELECT TO authenticated
-    USING (bucket_id = 'documents' AND (storage.foldername(name))[1] = get_my_org_id()::text);
+    USING (
+        bucket_id = 'documents'
+        AND (storage.foldername(name))[1] = get_my_org_id()::text
+    );
 
 CREATE POLICY "audio_public_read" ON storage.objects
     FOR SELECT TO anon
