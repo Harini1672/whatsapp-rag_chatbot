@@ -181,10 +181,12 @@ RETURNS UUID AS $$
   LIMIT 1;
 $$ LANGUAGE SQL SECURITY DEFINER STABLE;
 
--- ─── Drop existing policies (safe re-run) ────────────────────
+-- ─── Drop ALL existing policies (safe re-run) ────────────────
 
 DROP POLICY IF EXISTS "org_members_own"                ON organization_members;
+DROP POLICY IF EXISTS "org_members_insert_own"         ON organization_members;
 DROP POLICY IF EXISTS "org_own"                        ON organizations;
+DROP POLICY IF EXISTS "org_insert_own"                 ON organizations;
 DROP POLICY IF EXISTS "chatbots_own_org"               ON chatbots;
 DROP POLICY IF EXISTS "whatsapp_connections_own_org"   ON whatsapp_connections;
 DROP POLICY IF EXISTS "documents_own_org"              ON documents;
@@ -197,37 +199,68 @@ DROP POLICY IF EXISTS "documents_upload_own_org"       ON storage.objects;
 DROP POLICY IF EXISTS "documents_read_own_org"         ON storage.objects;
 DROP POLICY IF EXISTS "audio_public_read"              ON storage.objects;
 
--- ─── RLS Policies ────────────────────────────────────────────
-
+-- ─── organization_members policies ───────────────────────────
+-- SELECT: see your own membership row
 CREATE POLICY "org_members_own" ON organization_members
+    FOR SELECT
     USING (user_id = auth.uid());
 
+-- INSERT: any authenticated user can insert their OWN user_id
+-- This is required during registration — the user has no org yet
+CREATE POLICY "org_members_insert_own" ON organization_members
+    FOR INSERT TO authenticated
+    WITH CHECK (user_id = auth.uid());
+
+-- ─── organizations policies ───────────────────────────────────
+-- SELECT: see orgs you belong to
 CREATE POLICY "org_own" ON organizations
+    FOR SELECT
     USING (id = get_my_org_id());
 
+-- INSERT: any authenticated user can create an org they own
+-- owner_id must equal their own user id
+CREATE POLICY "org_insert_own" ON organizations
+    FOR INSERT TO authenticated
+    WITH CHECK (owner_id = auth.uid());
+
+-- UPDATE: only the org owner can update
+CREATE POLICY "org_update_own" ON organizations
+    FOR UPDATE TO authenticated
+    USING (owner_id = auth.uid());
+
+-- ─── All other table policies ────────────────────────────────
+
 CREATE POLICY "chatbots_own_org" ON chatbots
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 CREATE POLICY "whatsapp_connections_own_org" ON whatsapp_connections
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 CREATE POLICY "documents_own_org" ON documents
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 CREATE POLICY "conversations_own_org" ON conversations
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 CREATE POLICY "messages_own_org" ON messages
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 CREATE POLICY "support_requests_own_org" ON support_requests
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 CREATE POLICY "feedback_own_org" ON feedback
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 CREATE POLICY "analytics_events_own_org" ON analytics_events
-    USING (org_id = get_my_org_id());
+    USING (org_id = get_my_org_id())
+    WITH CHECK (org_id = get_my_org_id());
 
 -- ─── Storage Buckets ─────────────────────────────────────────
 
