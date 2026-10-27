@@ -21,41 +21,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const fetchProfile = useCallback(async (userId: string) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: member } = await (supabase as any)
-      .from('organization_members')
-      .select('role, organizations(id, name)')
-      .eq('user_id', userId)
-      .single()
+  const fetchProfile = useCallback(async (currentUser: User) => {
+    try {
+      // Use .maybeSingle() instead of .single() — no error if row missing
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: member, error } = await (supabase as any)
+        .from('organization_members')
+        .select('role, org_id')
+        .eq('user_id', currentUser.id)
+        .maybeSingle()
 
-    if (member && member.organizations) {
-      const org = Array.isArray(member.organizations)
-        ? member.organizations[0]
-        : member.organizations
+      if (error) {
+        console.warn('fetchProfile error:', error.message)
+        return
+      }
+
+      if (!member) {
+        // No org yet — set minimal profile so app still works
+        setProfile({
+          id: currentUser.id,
+          email: currentUser.email || '',
+          role: 'admin',
+          org_id: null,
+          org_name: null,
+        })
+        return
+      }
+
+      // Fetch org name separately to avoid join RLS issues
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: org } = await (supabase as any)
+        .from('organizations')
+        .select('id, name')
+        .eq('id', member.org_id)
+        .maybeSingle()
+
       setProfile({
-        id: userId,
-        email: user?.email || '',
+        id: currentUser.id,
+        email: currentUser.email || '',
         role: member.role as 'admin' | 'member',
-        org_id: org.id,
-        org_name: org.name,
+        org_id: member.org_id,
+        org_name: org?.name || null,
       })
+    } catch (err) {
+      console.warn('fetchProfile exception:', err)
     }
-  }, [user?.email])
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
-      if (session?.user) fetchProfile(session.user.id).finally(() => setLoading(false))
-      else setLoading(false)
+      if (session?.user) {
+        fetchProfile(session.user).finally(() => setLoading(false))
+      } else {
+        setLoading(false)
+      }
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
       if (session?.user) {
-        fetchProfile(session.user.id)
+        fetchProfile(session.user)
       } else {
         setProfile(null)
       }
@@ -74,6 +102,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw new Error(error.message)
     if (!data.user) throw new Error('Sign up failed — no user returned')
 
+    // Small delay to ensure Supabase auth session is ready before DB inserts
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
     // Create organization
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: org, error: orgError } = await (supabase as any)
@@ -81,14 +112,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .insert({ name: orgName, owner_id: data.user.id })
       .select()
       .single()
-    if (orgError) throw new Error(orgError.message)
+    if (orgError) throw new Error(`Organization creation failed: ${orgError.message}`)
 
     // Create membership
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: memberError } = await (supabase as any)
       .from('organization_members')
       .insert({ org_id: org.id, user_id: data.user.id, role: 'admin' })
-    if (memberError) throw new Error(memberError.message)
+    if (memberError) throw new Error(`Membership creation failed: ${memberError.message}`)
   }
 
   const signOut = async () => {

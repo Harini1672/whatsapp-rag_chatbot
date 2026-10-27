@@ -1,9 +1,11 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
+import { useEffect } from 'react'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { AdminLayout } from '@/components/layout/AdminLayout'
+import { wakeUpBackend } from '@/lib/api'
 
 // Pages
 import LandingPage from '@/pages/LandingPage'
@@ -22,6 +24,10 @@ import SettingsPage from '@/pages/settings/SettingsPage'
 import ChatAccessPage from '@/pages/chat/ChatAccessPage'
 
 export default function App() {
+  // Wake up the Render backend on app start (free tier sleeps after 15 min)
+  useEffect(() => {
+    wakeUpBackend()
+  }, [])
   return (
     <ThemeProvider>
       <AuthProvider>
