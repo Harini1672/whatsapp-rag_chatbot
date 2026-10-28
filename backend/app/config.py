@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_KEY: str  # service role key (backend)
     SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""  # Project Settings → Data API → JWT Secret
 
     # OpenAI (optional — used only for TTS if available)
     OPENAI_API_KEY: str = ""

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
-import { User, Session } from '@supabase/supabase-js'
+import { User, Session, createClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import type { AuthUser } from '@/types'
 
@@ -15,29 +15,43 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
+/**
+ * Create an authenticated Supabase client using the user's session token.
+ * This ensures auth.uid() works correctly in RLS policies.
+ */
+function getAuthClient(accessToken: string) {
+  return createClient(
+    import.meta.env.VITE_SUPABASE_URL,
+    import.meta.env.VITE_SUPABASE_ANON_KEY,
+    {
+      global: {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+      auth: { persistSession: false },
+    }
+  )
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const fetchProfile = useCallback(async (currentUser: User) => {
+  const fetchProfile = useCallback(async (currentUser: User, accessToken: string) => {
     try {
-      // Use .maybeSingle() instead of .single() — no error if row missing
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: member, error } = await (supabase as any)
+      // Use authenticated client so auth.uid() works in RLS
+      const authClient = getAuthClient(accessToken)
+
+      const { data: member, error } = await authClient
         .from('organization_members')
         .select('role, org_id')
         .eq('user_id', currentUser.id)
         .maybeSingle()
 
       if (error) {
-        console.warn('fetchProfile error:', error.message)
-        return
-      }
-
-      if (!member) {
-        // No org yet — set minimal profile so app still works
+        console.warn('fetchProfile member error:', error.message)
+        // Set minimal profile so the app still works
         setProfile({
           id: currentUser.id,
           email: currentUser.email || '',
@@ -48,23 +62,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
-      // Fetch org name separately to avoid join RLS issues
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: org } = await (supabase as any)
+      if (!member) {
+        setProfile({
+          id: currentUser.id,
+          email: currentUser.email || '',
+          role: 'admin',
+          org_id: null,
+          org_name: null,
+        })
+        return
+      }
+
+      // Fetch org name
+      const { data: org } = await authClient
         .from('organizations')
         .select('id, name')
-        .eq('id', member.org_id)
+        .eq('id', (member as { org_id: string; role: string }).org_id)
         .maybeSingle()
 
       setProfile({
         id: currentUser.id,
         email: currentUser.email || '',
-        role: member.role as 'admin' | 'member',
-        org_id: member.org_id,
-        org_name: org?.name || null,
+        role: (member as { role: string }).role as 'admin' | 'member',
+        org_id: (member as { org_id: string }).org_id,
+        org_name: (org as { name: string } | null)?.name || null,
       })
     } catch (err) {
       console.warn('fetchProfile exception:', err)
+      setProfile({
+        id: currentUser.id,
+        email: currentUser.email || '',
+        role: 'admin',
+        org_id: null,
+        org_name: null,
+      })
     }
   }, [])
 
@@ -72,8 +103,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchProfile(session.user).finally(() => setLoading(false))
+      if (session?.user && session.access_token) {
+        fetchProfile(session.user, session.access_token).finally(() => setLoading(false))
       } else {
         setLoading(false)
       }
@@ -82,8 +113,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchProfile(session.user)
+      if (session?.user && session.access_token) {
+        fetchProfile(session.user, session.access_token)
       } else {
         setProfile(null)
       }
@@ -102,12 +133,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw new Error(error.message)
     if (!data.user) throw new Error('Sign up failed — no user returned')
 
-    // Small delay to ensure Supabase auth session is ready before DB inserts
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Wait for session to be ready
+    await new Promise((resolve) => setTimeout(resolve, 800))
+
+    // Get fresh session with access token
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+    if (!token) throw new Error('Session not ready — please try signing in manually')
+
+    const authClient = getAuthClient(token)
 
     // Create organization
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: org, error: orgError } = await (supabase as any)
+    const { data: org, error: orgError } = await authClient
       .from('organizations')
       .insert({ name: orgName, owner_id: data.user.id })
       .select()
@@ -115,10 +152,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (orgError) throw new Error(`Organization creation failed: ${orgError.message}`)
 
     // Create membership
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: memberError } = await (supabase as any)
+    const { error: memberError } = await authClient
       .from('organization_members')
-      .insert({ org_id: org.id, user_id: data.user.id, role: 'admin' })
+      .insert({
+        org_id: (org as { id: string }).id,
+        user_id: data.user.id,
+        role: 'admin',
+      })
     if (memberError) throw new Error(`Membership creation failed: ${memberError.message}`)
   }
 
