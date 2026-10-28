@@ -19,7 +19,8 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
  * Cache of authenticated Supabase clients keyed by access token.
  * Prevents creating multiple GoTrueClient instances per render.
  */
-const _authClientCache = new Map<string, ReturnType<typeof createClient>>()
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _authClientCache = new Map<string, any>()
 
 function getAuthClient(accessToken: string) {
   if (_authClientCache.has(accessToken)) {
