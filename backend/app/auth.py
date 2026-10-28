@@ -100,19 +100,35 @@ def _verify_token_with_supabase(token: str) -> dict:
 def _decode_token(token: str) -> dict:
     """
     Decode and verify a Supabase JWT.
-    Strategy:
-    1. Try python-jose HS256 with SUPABASE_KEY
-    2. Try python-jose HS256 with SUPABASE_ANON_KEY
-    3. Try manual JWT decode + verify with Supabase Auth API
-    4. Last resort: decode without signature verification (read claims only)
+    Primary strategy: verify via Supabase Auth API — always works
+    regardless of key format (new sb_secret_ or old eyJ... format).
+    Fallback: try python-jose with known secrets.
     """
     settings = get_settings()
 
-    # Attempt 1, 2, 3: python-jose with known keys (including JWT secret if provided)
+    # Strategy 1: Verify via Supabase Auth API (most reliable)
+    # This works for ALL Supabase key formats
+    try:
+        claims = _decode_jwt_payload(token)
+        exp = claims.get("exp", 0)
+        if exp > time.time():
+            return _verify_token_with_supabase(token)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired — please log in again",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    # Strategy 2: python-jose with known keys (fallback)
     try:
         from jose import jwt as jose_jwt, JWTError
         keys_to_try = [
-            settings.SUPABASE_JWT_SECRET,  # Most reliable — explicit JWT secret
+            settings.SUPABASE_JWT_SECRET,
             settings.SUPABASE_KEY,
             settings.SUPABASE_ANON_KEY,
         ]
@@ -132,26 +148,7 @@ def _decode_token(token: str) -> dict:
     except ImportError:
         pass
 
-    # Attempt 3: Verify via Supabase Auth API (most reliable for new key format)
-    # Only use this if token looks valid (not expired based on claims)
-    try:
-        claims = _decode_jwt_payload(token)
-        exp = claims.get("exp", 0)
-        if exp > time.time():
-            # Token not expired — verify via Supabase
-            return _verify_token_with_supabase(token)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has expired",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        pass
-
-    # Attempt 4: Read claims without verification (fallback for development)
+    # Strategy 3: Read claims without verification (last resort)
     try:
         claims = _decode_jwt_payload(token)
         if claims.get("sub"):
