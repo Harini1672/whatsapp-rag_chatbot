@@ -175,6 +175,8 @@ async def get_current_user(
 
     # Fetch org membership from Supabase using service role (bypasses RLS)
     from app.database import get_supabase
+    import uuid
+    from datetime import datetime, timezone
     db = get_supabase()
     try:
         result = (
@@ -190,9 +192,59 @@ async def get_current_user(
                 org_id=result.data["org_id"],
                 role=result.data["role"],
             )
-    except Exception as e:
-        # Log but don't fail — return basic token data
+
+        # ── Auto-create org + membership if missing ──────────────────
+        # This handles users who registered before the migration was run
         import logging
-        logging.getLogger(__name__).warning(f"Could not fetch org for user {user_id}: {e}")
+        logger = logging.getLogger(__name__)
+        logger.info(f"No org found for user {user_id} — auto-creating organization")
+
+        # Get user email from Supabase
+        settings = get_settings()
+        user_resp = None
+        try:
+            import httpx
+            ur = httpx.get(
+                f"{settings.SUPABASE_URL}/auth/v1/admin/users/{user_id}",
+                headers={
+                    "apikey": settings.SUPABASE_KEY,
+                    "Authorization": f"Bearer {settings.SUPABASE_KEY}",
+                },
+                timeout=10,
+            )
+            if ur.status_code == 200:
+                user_resp = ur.json()
+        except Exception:
+            pass
+
+        email = (user_resp or {}).get("email", "user")
+        org_name = f"{email.split('@')[0]}'s Organization"
+        now = datetime.now(timezone.utc).isoformat()
+        org_id = str(uuid.uuid4())
+
+        # Create organization
+        db.table("organizations").insert({
+            "id": org_id,
+            "name": org_name,
+            "owner_id": user_id,
+            "created_at": now,
+            "updated_at": now,
+        }).execute()
+
+        # Create membership
+        db.table("organization_members").insert({
+            "id": str(uuid.uuid4()),
+            "org_id": org_id,
+            "user_id": user_id,
+            "role": "admin",
+            "created_at": now,
+        }).execute()
+
+        logger.info(f"Auto-created org {org_id} for user {user_id}")
+        return TokenData(user_id=user_id, org_id=org_id, role="admin")
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Could not fetch/create org for user {user_id}: {e}")
 
     return TokenData(user_id=user_id, org_id=None, role="admin")

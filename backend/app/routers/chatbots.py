@@ -10,6 +10,8 @@ router = APIRouter(prefix="/chatbots", tags=["Chatbots"])
 
 @router.get("")
 async def list_chatbots(current_user: TokenData = Depends(get_current_user)):
+    if not current_user.org_id:
+        return {"items": []}
     db = get_supabase()
     result = (
         db.table("chatbots")
@@ -23,6 +25,8 @@ async def list_chatbots(current_user: TokenData = Depends(get_current_user)):
 
 @router.post("")
 async def create_chatbot(data: ChatbotCreate, current_user: TokenData = Depends(get_current_user)):
+    if not current_user.org_id:
+        raise HTTPException(400, "Organization not set up. Please log out and log in again.")
     db = get_supabase()
     now = datetime.now(timezone.utc).isoformat()
     record = {
