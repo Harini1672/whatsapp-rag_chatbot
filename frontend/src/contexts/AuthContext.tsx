@@ -16,20 +16,32 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 /**
- * Create an authenticated Supabase client using the user's session token.
- * This ensures auth.uid() works correctly in RLS policies.
+ * Cache of authenticated Supabase clients keyed by access token.
+ * Prevents creating multiple GoTrueClient instances per render.
  */
+const _authClientCache = new Map<string, ReturnType<typeof createClient>>()
+
 function getAuthClient(accessToken: string) {
-  return createClient(
+  if (_authClientCache.has(accessToken)) {
+    return _authClientCache.get(accessToken)!
+  }
+  const client = createClient(
     import.meta.env.VITE_SUPABASE_URL,
     import.meta.env.VITE_SUPABASE_ANON_KEY,
     {
       global: {
         headers: { Authorization: `Bearer ${accessToken}` },
       },
-      auth: { persistSession: false },
+      auth: { persistSession: false, autoRefreshToken: false },
     }
   )
+  _authClientCache.set(accessToken, client)
+  // Keep cache small — only keep last 2 tokens
+  if (_authClientCache.size > 2) {
+    const firstKey = _authClientCache.keys().next().value
+    _authClientCache.delete(firstKey)
+  }
+  return client
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
